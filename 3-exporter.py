@@ -31,6 +31,7 @@ def export():
     # wxid = 'wxid_10bgyb9gnn8r22'  # 01-自己
     # wxid = '46297398354@chatroom'  # export
     wxid = '44353031172@chatroom' # backup
+    # wxid = 'wxid_657efir3ebsl12' # 贾
     
     output_dir = './output/data/'  # 输出文件夹
 
