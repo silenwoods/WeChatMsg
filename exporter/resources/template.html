@@ -1168,12 +1168,29 @@
             flex: 1
         }
 
-        .container .content:hover::-webkit-scrollbar-thumb {
-            background: rgba(0, 0, 0, .1)
+        #chat-container::-webkit-scrollbar {
+            display: block;
+            width: 12px;
         }
 
-        .container .content:hover::-webkit-scrollbar-thumb:hover {
-            background: rgba(0, 0, 0, .3)
+        #chat-container::-webkit-scrollbar-track {
+            background: #ededed;
+            border-radius: 8px;
+        }
+
+        #chat-container::-webkit-scrollbar-thumb {
+            min-height: 40px;
+            background: #b0b0b0;
+            border: 2px solid #ededed;
+            border-radius: 8px;
+        }
+
+        #chat-container::-webkit-scrollbar-thumb:hover {
+            background: #888;
+        }
+
+        #chat-container::-webkit-scrollbar-thumb:active {
+            background: #666;
         }
 
         @media screen and (max-width:768px) {
