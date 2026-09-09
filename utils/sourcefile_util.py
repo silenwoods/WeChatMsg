@@ -11,7 +11,10 @@ def verify_source_file(full_path):
         str: Original path if file exists, path to found file if found elsewhere, or empty string if not found
     """
 
-    if os.path.exists(full_path) and os.path.isfile(full_path):
+    # 空路径和目录没有可搜索的文件名，不能回退到扫描整个微信目录。
+    if not full_path or os.path.isdir(full_path) or not os.path.basename(full_path):
+        return ''
+    if os.path.isfile(full_path):
         return full_path
     
     # File doesn't exist, search in parent directory

@@ -14,6 +14,7 @@ from abc import ABC, abstractmethod
 import lz4.block
 import xmltodict
 
+from utils.sourcefile_util import verify_source_file
 from wxManager.model.message import BusinessCardMessage, VoipMessage, MergedMessage, WeChatVideoMessage, \
     PositionMessage, TransferMessage, RedEnvelopeMessage, FavNoteMessage, PatMessage
 from wxManager.parser.link_parser import parser_link, parser_applet, parser_business, parser_voip, \
@@ -541,6 +542,53 @@ class VoipMessageFactory(MessageFactory, Singleton):
 
 
 class MergedMessageFactory(MessageFactory, Singleton):
+    @staticmethod
+    def existing_media_path(path):
+        if not path or path == '.':
+            return ''
+        full_path = verify_source_file(os.path.join(Me().wx_dir, path))
+        return os.path.relpath(full_path, Me().wx_dir) if full_path else ''
+
+    def restore_source_media(self, inner_msg, manager):
+        """新转发 XML 可能省略 fullmd5，通过原消息 ID 恢复本地附件路径。"""
+        try:
+            source_id = int(inner_msg.source_server_id)
+        except (TypeError, ValueError):
+            return
+        if not 0 < source_id < 2 ** 63:
+            return
+        source = manager.msg_db.get_message_by_server_id('', source_id)
+        if not source:
+            return
+        expected_type = {MessageType.Image: 3, MessageType.Video: 43, MessageType.File: 49}
+        if source[2] != expected_type[inner_msg.type]:
+            return
+        if inner_msg.type == MessageType.File and source[3] not in (0, 6):
+            return
+
+        content = decompress(source[11]) or source[7]
+        extra = source[10] or b''
+        if inner_msg.type == MessageType.Video:
+            info = parse_video(content)
+            paths = [manager.get_video(content, extra, md5=info.get('md5')),
+                     manager.get_video(content, extra)]
+        elif inner_msg.type == MessageType.Image:
+            paths = [manager.get_image(content, extra, thumb=False),
+                     manager.get_image(content, extra, thumb=True)]
+        else:
+            info = parser_file(content)
+            paths = [manager.get_file(info.get('md5'))]
+            msg_bytes = MessageBytesExtra()
+            msg_bytes.ParseFromString(extra)
+            for entry in msg_bytes.message2:
+                if entry.field1 == 4:
+                    paths.append('\\'.join(entry.field2.split('\\')[1:]))
+        for path in paths:
+            resolved = self.existing_media_path(path)
+            if resolved:
+                inner_msg.path = resolved
+                return
+
     def create(self, message, username, manager):
         is_sender, wxid, message_content = self.common_attribute(message, username, manager)
         info = parser_merged_messages(message_content, '', username, message[5])
@@ -564,48 +612,40 @@ class MergedMessageFactory(MessageFactory, Singleton):
             messages=info.get('messages', []),
             level=0
         )
-        dir0 = ''
         month = msg.str_time[:7]  # 2025-03
 
-        def parser_merged(merged_messages, level):
-            for index, inner_msg in enumerate(merged_messages):
+        def parser_merged(merged_messages):
+            for inner_msg in merged_messages:
+                if inner_msg.type == MessageType.MergedMessages:
+                    parser_merged(inner_msg.messages)
+                    continue
+                if inner_msg.type not in (MessageType.Image, MessageType.Video, MessageType.File):
+                    continue
+                # 保留 XML 中可用的 datasourcepath。
+                resolved = self.existing_media_path(inner_msg.path)
+                if resolved:
+                    inner_msg.path = resolved
+                    continue
                 if inner_msg.type == MessageType.Image:
-                    if dir0:
-                        img_suffix = f'FileStorage/MsgAttach/{hashlib.md5(username.encode("utf-8")).hexdigest()}/Thumb/{month}/{inner_msg.md5}_2.dat'
-                        origin_img_path = os.path.join(Me().wx_dir,
-                                                       img_suffix)
-                    else:
-                        path = manager.get_image(content='', md5=inner_msg.md5, bytesExtra=b'', up_dir='',
-                                                 thumb=False, talker_username=username)
-                        inner_msg.path = path
+                    if inner_msg.md5:
+                        inner_msg.path = manager.get_image(content='', md5=inner_msg.md5, bytesExtra=b'',
+                                                           thumb=False, talker_username=username)
                         inner_msg.thumb_path = manager.get_image(content='', md5=inner_msg.md5, bytesExtra=b'',
-                                                                 up_dir='',
                                                                  thumb=True, talker_username=username)
-                    if not os.path.exists(os.path.join(Me().wx_dir, inner_msg.path)) or inner_msg.path == '.':
-                        inner_msg.path = f'FileStorage/MsgAttach/{hashlib.md5(username.encode("utf-8")).hexdigest()}/Thumb/{month}/{inner_msg.md5}_{2}.dat'
-                    logger.debug(inner_msg.path)
+                        if not self.existing_media_path(inner_msg.path):
+                            inner_msg.path = f'FileStorage/MsgAttach/{hashlib.md5(username.encode("utf-8")).hexdigest()}/Thumb/{month}/{inner_msg.md5}_2.dat'
                 elif inner_msg.type == MessageType.Video:
-                    if dir0:
-                        inner_msg.path = os.path.join('msg', 'attach',
-                                                      hashlib.md5(username.encode("utf-8")).hexdigest(),
-                                                      month,
-                                                      'Rec', dir0, 'V', f"{level}{'_' if level else ''}{index}.mp4")
-                    else:
-                        inner_msg.path = manager.get_video('', '', md5=inner_msg.md5, thumb=False)
-                        inner_msg.thumb_path = manager.get_video('', '', md5=inner_msg.md5, thumb=True)
+                    inner_msg.path = manager.get_video('', b'', md5=inner_msg.md5, thumb=False)
+                    inner_msg.thumb_path = manager.get_video('', b'', md5=inner_msg.md5, thumb=True)
                 elif inner_msg.type == MessageType.File:
-                    if dir0:
-                        inner_msg.path = os.path.join('msg', 'attach',
-                                                      hashlib.md5(username.encode("utf-8")).hexdigest(),
-                                                      month,
-                                                      'Rec', dir0, 'F', f"{level}{'_' if level else ''}{index}",
-                                                      inner_msg.file_name)
-                    else:
-                        inner_msg.path = manager.get_file(inner_msg.md5)
-                elif inner_msg.type == MessageType.MergedMessages:
-                    parser_merged(inner_msg.messages, f'{index}')
+                    inner_msg.path = manager.get_file(inner_msg.md5)
+                resolved = self.existing_media_path(inner_msg.path)
+                if resolved:
+                    inner_msg.path = resolved
+                else:
+                    self.restore_source_media(inner_msg, manager)
 
-        parser_merged(msg.messages, '')
+        parser_merged(msg.messages)
         self.add_message(msg)
         return msg
 

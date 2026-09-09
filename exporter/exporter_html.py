@@ -129,10 +129,13 @@ class HtmlExporter(ExporterBase):
                         message_record["content"] = message.file_name
                     case 43:
                         message_record["content"] = message.file_name
+                    case 25769803825:
+                        message_record["content"] = message.file_name
+                        message_record["path"] = message.path
                     case 81604378673:
                         message_record["title"] = message.title
                         message_record["description"] = message.description
-                        message_record["link_url"] = dir_name + '.html'
+                        message_record["link_url"] = build_merged_msg_dirname(message)[0] + '.html'
                     case _:
                         message_record["content"] = "tmp"
                 message_records.append(message_record)
@@ -167,6 +170,15 @@ class HtmlExporter(ExporterBase):
             with open(html_file_path, "w", encoding="utf-8") as f:
                 f.write(html_content)
 
+        def set_merged_media_filename(msg):
+            msg.set_file_name()
+            # 合并消息的 server_id 均为 0，同一秒的多个附件不能共用文件名。
+            identity = msg.source_server_id or msg.md5 or msg.path
+            if identity:
+                stem, extension = os.path.splitext(msg.file_name)
+                suffix = hashlib.md5(str(identity).encode('utf-8')).hexdigest()
+                msg.file_name = f'{stem}_{suffix}{extension}'
+
         def parser_merged(merged_message):
             dir_name, merged_msg_dir, relative_path = build_merged_msg_dirname(merged_message)
 
@@ -174,11 +186,11 @@ class HtmlExporter(ExporterBase):
                 process_avatar(msg, avatar_tasks, avatar_dir)
                 type_ = msg.type
                 if type_ == MessageType.Image:
-                    msg.set_file_name()
-                    origin_file_path = os.path.join(Me().wx_dir, msg.path)
+                    set_merged_media_filename(msg)
+                    origin_file_path = os.path.join(Me().wx_dir, msg.path) if msg.path else ''
                     full_path = verify_source_file(origin_file_path)
                     if full_path == '':
-                        print(f'合并消息{merged_message.str_time}中{msg.str_time} Image 源文件 {origin_file_path} 不存在')
+                        print(f'合并消息{merged_message.str_time}中{msg.str_time} Image 源文件 {origin_file_path or "[未解析到附件路径]"} 不存在')
                     else:
                         image_tasks.append(
                             (
@@ -189,10 +201,10 @@ class HtmlExporter(ExporterBase):
                         )
                     msg.path = f"./{relative_path}/{msg.file_name}"
                 elif type_ == MessageType.File:
-                    origin_file_path = os.path.join(Me().wx_dir, msg.path)
+                    origin_file_path = os.path.join(Me().wx_dir, msg.path) if msg.path else ''
                     full_path = verify_source_file(origin_file_path)
                     if full_path == '':
-                        print(f'合并消息{merged_message.str_time}中{msg.str_time} File 源文件 {origin_file_path} 不存在')
+                        print(f'合并消息{merged_message.str_time}中{msg.str_time} File 源文件 {origin_file_path or "[未解析到附件路径]"} 不存在')
                     else:
                         file_tasks.append(
                             (
@@ -201,13 +213,14 @@ class HtmlExporter(ExporterBase):
                                 ''
                             )
                         )
-                    msg.path = f'./{relative_path}/{os.path.basename(origin_file_path)}'
+                        msg.file_name = os.path.basename(full_path)
+                        msg.path = f'./{relative_path}/{msg.file_name}'
                 elif type_ == MessageType.Video:
-                    msg.set_file_name()
-                    origin_file_path = os.path.join(Me().wx_dir, msg.path)
+                    set_merged_media_filename(msg)
+                    origin_file_path = os.path.join(Me().wx_dir, msg.path) if msg.path else ''
                     full_path = verify_source_file(origin_file_path)
                     if full_path == '':
-                        print(f'合并消息{merged_message.str_time}中{msg.str_time} Video 源文件 {origin_file_path} 不存在')
+                        print(f'合并消息{merged_message.str_time}中{msg.str_time} Video 源文件 {origin_file_path or "[未解析到附件路径]"} 不存在')
                     else:
                         video_tasks.append(
                             (

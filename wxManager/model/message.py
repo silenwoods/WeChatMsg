@@ -8,7 +8,7 @@
 @File        : MemoTrace-message.py 
 @Description : 
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List
 from datetime import datetime
 
@@ -181,6 +181,8 @@ class FileMessage(Message):
     file_size: int
     file_name: str
     file_type: str
+    # 合并转发中的原消息 ID，与合并消息自身的 server_id 分开保存。
+    source_server_id: str = field(default='', kw_only=True)
 
     def to_json(self) -> dict:
         data = super().to_json()

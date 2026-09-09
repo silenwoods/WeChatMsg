@@ -2966,7 +2966,7 @@
               {% elif record.type == 3 %}
               <div class="chat-image">
                 <img
-                  src={{ record.files_dir + '/' + record.content }}
+                  src="{{ (record.files_dir + '/' + record.content) | e }}"
                   onclick="showModal(this)"
                   loading="lazy"
                 />
@@ -2975,10 +2975,13 @@
               {% elif record.type == 43 %}
               <div class="chat-video">
                 <video
-                  src={{ record.files_dir + '/' + record.content }}
+                  src="{{ (record.files_dir + '/' + record.content) | e }}"
                   controls=""
                 ></video>
               </div>
+
+              {% elif record.type == 25769803825 %}
+              <a href="{{ record.path | e }}" download>{{ record.content | e }}</a>
 
               {% elif record.type == 81604378673 %}
               <a href="{{ record.link_url }}" target="_blank" style="text-decoration: none; color: inherit;">
