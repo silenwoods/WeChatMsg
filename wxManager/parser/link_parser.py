@@ -14,6 +14,7 @@ import traceback
 from datetime import datetime, timedelta
 import xml.etree.ElementTree as ET
 from typing import List
+from xml.parsers.expat import ExpatError
 
 import xmltodict
 
@@ -208,14 +209,33 @@ def parser_business(xml_content):
 
 
 def replace_entity(match):
-    # 获取匹配的数字
-    return ''
+    value = match.group(1)
+    codepoint = int(value[1:], 16) if value.startswith('x') else int(value)
+    valid = (codepoint in (9, 10, 13) or 0x20 <= codepoint <= 0xD7FF
+             or 0xE000 <= codepoint <= 0xFFFD or 0x10000 <= codepoint <= 0x10FFFF)
+    return match.group(0) if valid else ''
 
 
 def process_xml(xml_string):
-    # 使用正则表达式替换所有十进制转义字符
-    processed_xml = re.sub(r'&#(\d+);', replace_entity, xml_string)
-    return processed_xml
+    """修复裸 & 和非法 XML 字符，保留合法实体及 CDATA 中的下一层 XML。"""
+    # 原始控制字符在 CDATA 中也不合法；数字实体则留到所属 XML 层处理。
+    xml_string = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', xml_string)
+    parts = re.split(r'(<!\[CDATA\[.*?\]\]>|<!--.*?-->)', xml_string, flags=re.DOTALL)
+    for index in range(0, len(parts), 2):
+        part = re.sub(r'&#(x[0-9a-fA-F]+|\d+);', replace_entity, parts[index])
+        parts[index] = re.sub(r'&(?!amp;|lt;|gt;|quot;|apos;|#\d+;|#x[0-9a-fA-F]+;)',
+                              '&amp;', part)
+    return ''.join(parts)
+
+
+def _parse_merged_xml(xml_string):
+    # 仅对整份被转义的文档解码；不能提前展开正文或引用消息中的 XML。
+    if xml_string.lstrip().startswith('&lt;'):
+        xml_string = html.unescape(xml_string)
+    try:
+        return xmltodict.parse(xml_string)
+    except ExpatError:
+        return xmltodict.parse(process_xml(xml_string))
 
 
 def parser_record_item(recorditem, output_dir, wxid, msg_time, level=0):
@@ -223,11 +243,7 @@ def parser_record_item(recorditem, output_dir, wxid, msg_time, level=0):
     if isinstance(xml_string, dict):
         recorditem_dic = xml_string
     else:
-        try:
-            recorditem_dic = xmltodict.parse(xml_string)
-        except:
-            xml_string = process_xml(xml_string)
-            recorditem_dic = xmltodict.parse(xml_string)
+        recorditem_dic = _parse_merged_xml(xml_string)
     # logger.error(recorditem_dic)
     datalist = recorditem_dic.get('recordinfo', {}).get('datalist', {})
     count = datalist.get('@count', 0)
@@ -551,14 +567,7 @@ def parser_record_item(recorditem, output_dir, wxid, msg_time, level=0):
 
 def parser_merged_messages(xml: str, output_dir, wxid, msg_time, level=0):
     try:
-        try:
-            data_dic = xmltodict.parse(xml).get('msg', {})
-        except:
-            new_xml1 = html.unescape(xml)
-            new_xml2 = new_xml1.replace('&', '&amp;')
-            # xml = xml.replace('&#x20;', ' ').replace('&#15;', '').replace('&#x0A;', '\n').replace('\xa0',' ')  # 搞不懂这帮人在干嘛，有些转义，有些不转义
-            # html.unescape(xml)
-            data_dic = xmltodict.parse(new_xml2).get('msg', {})
+        data_dic = _parse_merged_xml(xml).get('msg', {})
         app_msg_dic = data_dic.get('appmsg', {})
         desc = app_msg_dic.get('des', '')
         title = app_msg_dic.get('title', '')
@@ -568,12 +577,8 @@ def parser_merged_messages(xml: str, output_dir, wxid, msg_time, level=0):
             'desc': desc,  # 描述
             'messages': parser_record_item(recorditem, output_dir, wxid, msg_time, level),  # List[dict] 消息内容
         }
-    except:
-        logger.error(xml)
-        # logger.error(new_xml1)
-        # logger.error(new_xml2)
-        logger.error(traceback.format_exc())
-        # raise ValueError('合并转发的消息解析失败')
+    except Exception as exc:
+        logger.error(f'合并转发消息解析失败（会话={wxid}，时间={msg_time}）：{exc}')
         return {
             'title': '解析失败',  # 标题
             'desc': '合并转发的消息解析失败',  # 描述
